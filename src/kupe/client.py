@@ -28,7 +28,7 @@ from kupe.resources.tools import ToolsResource
 from kupe.resources.usage import UsageResource
 from kupe.resources.voices import VoicesResource
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 def _looks_like_jwt(token: str) -> bool:
@@ -131,12 +131,38 @@ class Kupe:
     def _ensure_scope(self) -> None:
         if self._org_id and self._project_id:
             return
-        me = self.me()
-        data = me.to_dict() if isinstance(me, KupeObject) else dict(me)
+        try:
+            me = self.me()
+            data = me.to_dict() if isinstance(me, KupeObject) else dict(me)
+            if not self._org_id:
+                self._org_id = data.get("org_id") or None
+            if not self._project_id:
+                self._project_id = data.get("project_id") or None
+        except APIError as exc:
+            # Older deployments may not expose GET /v1/me yet. Fall back to the
+            # feature-flags + projects endpoints that API keys can already call.
+            if getattr(exc, "status_code", None) not in (404, 405):
+                raise
+        if self._org_id and self._project_id:
+            return
+        flags = self._request("GET", "feature-flags")
+        flag_data = flags.to_dict() if isinstance(flags, KupeObject) else dict(flags)
         if not self._org_id:
-            self._org_id = data.get("org_id") or None
+            self._org_id = flag_data.get("org_id") or None
+        if not self._org_id:
+            return
         if not self._project_id:
-            self._project_id = data.get("project_id") or None
+            projects = self._request(
+                "GET",
+                f"orgs/{self._org_id}/projects",
+                params={"limit": 1, "offset": 0},
+            )
+            proj = projects.to_dict() if isinstance(projects, KupeObject) else dict(projects)
+            items = proj.get("items") or []
+            if items:
+                first = items[0]
+                first_data = first.to_dict() if isinstance(first, KupeObject) else dict(first)
+                self._project_id = first_data.get("id") or None
 
     def _org(self, org_id: str | None = None) -> str:
         if org_id:
