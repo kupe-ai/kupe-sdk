@@ -28,7 +28,7 @@ from kupe.resources.tools import ToolsResource
 from kupe.resources.usage import UsageResource
 from kupe.resources.voices import VoicesResource
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 
 def _looks_like_jwt(token: str) -> bool:
