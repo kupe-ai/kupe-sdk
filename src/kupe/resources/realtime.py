@@ -64,7 +64,26 @@ class RealtimeResource(APIResource):
         super().__init__(client)
         self.sessions = RealtimeSessionsResource(client)
 
-    def connect(self, session: RealtimeSession | Any, **kwargs: Any):
+    def connect(
+        self,
+        session: RealtimeSession | Any,
+        *,
+        echo_suppression: str = "none",
+        echo_tail_ms: int = 250,
+        **kwargs: Any,
+    ):
+        """Open the realtime WebSocket for ``session``.
+
+        Set ``echo_suppression="half_duplex"`` when the agent's audio plays
+        out of open speakers next to the mic, so the agent does not hear (and
+        transcribe) its own voice. See :class:`kupe.realtime.RealtimeConnection`
+        for the barge-in trade-off.
+        """
         from kupe.realtime import RealtimeConnection
 
-        return RealtimeConnection.from_session(session, connect_fn=kwargs.get("connect_fn"))
+        return RealtimeConnection.from_session(
+            session,
+            connect_fn=kwargs.get("connect_fn"),
+            echo_suppression=echo_suppression,
+            echo_tail_ms=echo_tail_ms,
+        )

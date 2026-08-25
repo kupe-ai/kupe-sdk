@@ -43,7 +43,11 @@ When `org_id` / `project_id` are omitted, they are filled from `GET /v1/me`.
 
 `client.agents`, `realtime`, `sessions`, `inbound`, `campaigns`, `recipient_lists`, `tools`, `composio`, `analyses`, `databases`, `knowledge_bases`, `phones`, `voices`, `providers`, `logs`, `billing`, `usage`, `orgs`, `projects`.
 
-Realtime audio is PCM16 mono at 24 kHz (`rt.append_audio(pcm)`). Voice clone / patch / delete require a user JWT — calling them with an API key raises `JWTRequiredError`.
+Realtime audio is PCM16 mono at 24 kHz (`rt.append_audio(pcm)`). Playing the
+agent through open speakers next to the mic makes it hear and answer itself —
+pass `client.realtime.connect(session, echo_suppression="half_duplex")` to mute
+the mic while the agent speaks (no barge-in), or use a headset and keep the
+default `"none"`. Voice clone / patch / delete require a user JWT — calling them with an API key raises `JWTRequiredError`.
 
 Payments, credit checkout, and per-service usage breakdown are not included.
 
