@@ -18,7 +18,12 @@ pip install -e ./kupe-sdk
 from kupe import Kupe
 
 client = Kupe()  # KUPE_API_KEY
-session = client.realtime.sessions.create(agent_id="agt_...", voice="priya")
+session = client.realtime.sessions.create(
+    name="Priya",
+    voice="priya",
+    prompt="You collect overdue EMIs. Be warm and brief.",
+    greeting="Hi, this is Priya from the bank.",
+)
 with client.realtime.connect(session) as rt:
     rt.send_text("Hi — remind them EMI is due tomorrow.")
     for event in rt:
@@ -27,6 +32,8 @@ with client.realtime.connect(session) as rt:
 ```
 
 Auth is `Authorization: Bearer sk-kupe-...` (or a Supabase JWT). Default base is `https://x.kupe.in`. Env: `KUPE_API_KEY`, optional `KUPE_BASE_URL`.
+
+Pass `name` or `agent_id` (copy it from the agent editor). If `name` is new, Kupe creates the agent with `prompt`, `greeting`, `voice`, and `tools`/`mcp`. If that name already exists in the project, the existing agent is reused and those fields overlay this session. Pass `voice` (name) or `voice_id` — either one.
 
 Every HTTP path is `{base}/v1/...`. Passing `base_url="https://x.kupe.in/v1"` is fine — the client will not drop `/v1`.
 

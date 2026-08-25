@@ -82,3 +82,4 @@ class RealtimeSession(BaseModel):
     client_secret: RealtimeClientSecret
     websocket_url: str
     session_id: str | None = None
+    agent_id: str | None = None

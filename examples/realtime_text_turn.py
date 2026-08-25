@@ -11,11 +11,18 @@ import os
 
 from kupe import Kupe
 
-AGENT_ID = os.environ.get("KUPE_AGENT_ID", "agt_collections_demo")
+AGENT_ID = os.environ.get("KUPE_AGENT_ID")
+AGENT_NAME = os.environ.get("KUPE_AGENT_NAME", "Priya")
 VOICE = os.environ.get("KUPE_VOICE", "tripti")
 
 client = Kupe()  # KUPE_API_KEY, optional KUPE_BASE_URL
-session = client.realtime.sessions.create(agent_id=AGENT_ID, voice=VOICE)
+session = client.realtime.sessions.create(
+    agent_id=AGENT_ID,
+    name=None if AGENT_ID else AGENT_NAME,
+    voice=VOICE,
+    prompt=None if AGENT_ID else "You collect overdue EMIs. Be warm and brief.",
+    greeting=None if AGENT_ID else "Hi, this is Priya from the bank.",
+)
 print(f"session ok — voice={VOICE} ws={session.websocket_url}")
 
 with client.realtime.connect(session) as rt:

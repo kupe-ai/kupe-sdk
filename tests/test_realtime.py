@@ -51,6 +51,62 @@ def test_realtime_session_create_path() -> None:
     client.close()
 
 
+def test_realtime_session_create_voice_id() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "sess_1",
+                "client_secret": {"value": "eph_secret", "expires_at": 1},
+                "websocket_url": "wss://x.kupe.in/v1/realtime",
+                "voice": "priya",
+            },
+        )
+
+    client = mock_client(handler)
+    client.realtime.sessions.create(agent_id="agt_1", voice_id="pub-1")
+    assert json.loads(captured[0].content) == {"agent_id": "agt_1", "voice_id": "pub-1"}
+    client.close()
+
+
+def test_realtime_session_create_by_name() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "sess_1",
+                "agent_id": "new-agt",
+                "client_secret": {"value": "eph_secret", "expires_at": 1},
+                "websocket_url": "wss://x.kupe.in/v1/realtime",
+                "voice": "priya",
+            },
+        )
+
+    client = mock_client(handler)
+    session = client.realtime.sessions.create(
+        name="Priya",
+        voice="priya",
+        prompt="Be brief.",
+        greeting="Hi.",
+        tools=[{"type": "function", "name": "lookup_emi"}],
+    )
+    assert json.loads(captured[0].content) == {
+        "name": "Priya",
+        "voice": "priya",
+        "prompt": "Be brief.",
+        "greeting": "Hi.",
+        "tools": [{"type": "function", "name": "lookup_emi"}],
+    }
+    assert session.agent_id == "new-agt"
+    client.close()
+
+
 def test_realtime_text_and_audio_and_events() -> None:
     fake = FakeWS(
         incoming=[
