@@ -68,3 +68,9 @@ class DatabasesResource(APIResource):
             params=drop_none({"format": format, "q": q}),
             raw=True,
         )
+
+    def update_row(self, database_id: str, row_id: str, **body: Any) -> Any:
+        return self._patch(f"databases/{database_id}/rows/{row_id}", json=body)
+
+    def delete_row(self, database_id: str, row_id: str) -> None:
+        self._delete(f"databases/{database_id}/rows/{row_id}")

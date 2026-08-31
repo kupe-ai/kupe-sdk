@@ -99,6 +99,35 @@ def test_sessions_inbound_campaigns_lists() -> None:
     client.close()
 
 
+def test_phones_ucc_paths() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"items": [], "total": 0, "actionable_count": 0})
+
+    client = mock_client(handler)
+    client.phones.ucc_list(status="pending", from_number="+9111")
+    client.phones.ucc_summary()
+    client.phones.ucc_retrieve("PUCC-2026-1")
+    client.phones.ucc_submit_proof("PUCC-2026-1", file=("proof.pdf", b"%PDF", "application/pdf"))
+    client.phones.ucc_sync()
+    paths = [r.url.path for r in captured]
+    assert paths == [
+        "/v1/orgs/org_1/plivo/ucc",
+        "/v1/orgs/org_1/plivo/ucc/summary",
+        "/v1/orgs/org_1/plivo/ucc/PUCC-2026-1",
+        "/v1/orgs/org_1/plivo/ucc/PUCC-2026-1/proof",
+        "/v1/orgs/org_1/plivo/ucc/sync",
+    ]
+    assert captured[0].url.params.get("status") == "pending"
+    assert captured[0].url.params.get("from_number") == "+9111"
+    assert captured[3].method == "POST"
+    assert "multipart/form-data" in captured[3].headers["content-type"]
+    assert captured[4].method == "POST"
+    client.close()
+
+
 def test_usage_only_cost_summary_and_daily() -> None:
     captured: list[httpx.Request] = []
 

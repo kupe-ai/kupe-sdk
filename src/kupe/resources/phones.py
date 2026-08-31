@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, BinaryIO
 
 from kupe.resources._base import APIResource, drop_none
 
@@ -58,3 +58,41 @@ class PhonesResource(APIResource):
     def refresh_compliance(self, *, org_id: str | None = None) -> Any:
         org_id = self._org(org_id)
         return self._post(f"orgs/{org_id}/plivo/compliance/refresh")
+
+    def ucc_list(
+        self,
+        *,
+        org_id: str | None = None,
+        status: str | None = None,
+        from_number: str | None = None,
+    ) -> Any:
+        org_id = self._org(org_id)
+        return self._get(
+            f"orgs/{org_id}/plivo/ucc",
+            params=drop_none({"status": status, "from_number": from_number}),
+        )
+
+    def ucc_summary(self, *, org_id: str | None = None) -> Any:
+        org_id = self._org(org_id)
+        return self._get(f"orgs/{org_id}/plivo/ucc/summary")
+
+    def ucc_retrieve(self, reference_id: str, *, org_id: str | None = None) -> Any:
+        org_id = self._org(org_id)
+        return self._get(f"orgs/{org_id}/plivo/ucc/{reference_id}")
+
+    def ucc_submit_proof(
+        self,
+        reference_id: str,
+        file: BinaryIO | tuple[str, bytes] | Any,
+        *,
+        org_id: str | None = None,
+    ) -> Any:
+        org_id = self._org(org_id)
+        return self._post(
+            f"orgs/{org_id}/plivo/ucc/{reference_id}/proof",
+            files={"file": file},
+        )
+
+    def ucc_sync(self, *, org_id: str | None = None) -> Any:
+        org_id = self._org(org_id)
+        return self._post(f"orgs/{org_id}/plivo/ucc/sync")

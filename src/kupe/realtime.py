@@ -133,7 +133,7 @@ class RealtimeConnection:
         self._echo_tail = max(0.0, echo_tail_ms / 1000.0)
         self._playback_lock = threading.Lock()
         self._playback_until = 0.0
-        #: Frames dropped by echo suppression so far (diagnostics).
+        #: Frames replaced with silence by echo suppression (diagnostics).
         self.suppressed_frames = 0
 
     @classmethod
@@ -221,25 +221,34 @@ class RealtimeConnection:
     def append_audio(self, pcm16: bytes, *, force: bool = False) -> bool:
         """Append a PCM16 mono frame (24 kHz) to the input audio buffer.
 
-        Returns ``True`` when the frame was sent and ``False`` when echo
-        suppression dropped it because the agent is still speaking. Pass
-        ``force=True`` to send regardless of the gate.
+        Returns ``True`` when the caller's audio was sent and ``False`` when
+        echo suppression muted it because the agent is still speaking. A muted
+        frame is still sent, as silence, so the server's streaming VAD and STT
+        keep receiving a continuous stream. Pass ``force=True`` to send the
+        real audio regardless of the gate.
         """
-        if (
+        muted = (
             not force
             and self.echo_suppression == "half_duplex"
             and self.agent_is_speaking
-        ):
+        )
+        if muted:
             with self._playback_lock:
                 self.suppressed_frames += 1
-            return False
+            # Replace the frame with silence instead of skipping the send.
+            # The server runs streaming VAD and STT over a continuous audio
+            # stream, so sending nothing stalls turn detection entirely --
+            # the agent stops hearing the caller even after it finishes
+            # speaking. Silence keeps the stream (and the VAD clock) alive
+            # while still not carrying the agent's echoed voice.
+            pcm16 = b"\x00" * len(pcm16)
         self.send(
             {
                 "type": "input_audio_buffer.append",
                 "audio": base64.b64encode(pcm16).decode("ascii"),
             }
         )
-        return True
+        return not muted
 
     def commit_audio(self) -> None:
         self.send({"type": "input_audio_buffer.commit"})
