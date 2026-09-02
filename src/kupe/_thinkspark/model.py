@@ -88,14 +88,15 @@ class ThinkSparkModel(nn.Module):
             # repo that most users cannot pull at all.
             from transformers import AutoConfig
 
-            # The checkpoint folder may carry the TRAINER's config.json (no model_type),
-            # which AutoConfig cannot read. Fall back to the base repo's config — that is
-            # a ~1 KB json, NOT the weights, so the expensive gated download is still
-            # avoided either way.
+            from kupe._thinkspark.backbone_config import backbone_config
+
+            # The checkpoint folder carries the TRAINER's config.json (no model_type),
+            # which AutoConfig cannot read. Fall back to the vendored architecture spec
+            # rather than the gated google/gemma-3-270m repo — nothing is downloaded.
             try:
                 cfg = AutoConfig.from_pretrained(config_source, token=hf_token)
             except (ValueError, OSError):
-                cfg = AutoConfig.from_pretrained(base_model, token=hf_token)
+                cfg = backbone_config(attn_implementation)
             try:
                 cfg._attn_implementation = attn_implementation
             except Exception:
