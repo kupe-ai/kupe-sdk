@@ -88,7 +88,14 @@ class ThinkSparkModel(nn.Module):
             # repo that most users cannot pull at all.
             from transformers import AutoConfig
 
-            cfg = AutoConfig.from_pretrained(config_source, token=hf_token)
+            # The checkpoint folder may carry the TRAINER's config.json (no model_type),
+            # which AutoConfig cannot read. Fall back to the base repo's config — that is
+            # a ~1 KB json, NOT the weights, so the expensive gated download is still
+            # avoided either way.
+            try:
+                cfg = AutoConfig.from_pretrained(config_source, token=hf_token)
+            except (ValueError, OSError):
+                cfg = AutoConfig.from_pretrained(base_model, token=hf_token)
             try:
                 cfg._attn_implementation = attn_implementation
             except Exception:
