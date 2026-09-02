@@ -67,7 +67,16 @@ class MimiEncoder:
         import os
 
         import torch
-        from transformers import MimiModel, AutoFeatureExtractor
+        try:
+            from transformers import MimiModel, AutoFeatureExtractor
+        except Exception as e:
+            import transformers as _tf
+            cause = e.__cause__ or e
+            raise ImportError(
+                f"Need transformers>=4.49 with MimiModel (have {_tf.__version__}): "
+                f"{type(cause).__name__}: {cause}\n"
+                "  pip install -U 'transformers>=4.49,<5' accelerate"
+            ) from e
 
         self._torch = torch
         dev = self._device or (
@@ -336,3 +345,84 @@ def _resample(wav: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
         return wav
     n_out = int(round(len(wav) * sr_out / sr_in))
     return _resize_1d(wav, n_out)
+
+
+# --------------------------------------------------------------------------- #
+# Streaming encoder (live inference, Section 11)
+# --------------------------------------------------------------------------- #
+class StreamingMimiEncoder:
+    """Continuous, per-frame Mimi encode for the live referee.
+
+    The offline ``MimiEncoder.encode_waveform`` is stateless: it encodes each clip in
+    isolation. Calling it on one bare 80 ms frame (1920 samples) at a time — which is
+    what the old live path did — is wrong twice over:
+
+      1. **Boundary artefacts.** Mimi is a *causal convolutional* codec; the first output
+         frame of any encode has no left context, so a per-frame stateless encode feeds
+         the model a stream of first-frames — every token computed as if the utterance
+         had just started. The offline (whole-clip) tokens the model trained on never
+         look like that.
+      2. **Cold cost.** A fresh ``encode`` on a tiny buffer pays fixed setup every frame.
+
+    This keeps a small rolling tail of already-seen audio (``ctx_frames`` frames of left
+    context) and re-encodes ``[context || new]`` each push, emitting only the tokens for
+    the *new* frames — which now carry the same left context they had offline. Context is
+    tiny (default 8 frames = 640 ms) so the extra encode work is a couple of ms, warm.
+
+    Frame alignment is exact because both the context tail and every push are whole
+    multiples of the 1920-sample hop (the live loop pushes exactly one 80 ms frame).
+    """
+
+    def __init__(self, base: MimiEncoder, ctx_frames: int = 8):
+        self.base = base
+        self.ctx_frames = int(ctx_frames)
+        self._ctx = np.zeros(0, dtype=np.float32)
+
+    @property
+    def codebook_size(self) -> int:
+        return self.base.codebook_size
+
+    def reset(self) -> None:
+        """Drop the rolling context — call at a turn boundary / conversation reset."""
+        self._ctx = np.zeros(0, dtype=np.float32)
+
+    def push(self, wav: np.ndarray, sample_rate: int) -> EncodedAudio:
+        """Encode the newly-arrived audio, returning only its new frames.
+
+        ``wav`` is the fresh samples since the last push (any whole number of frames).
+        The returned EncodedAudio holds exactly ``len(wav_24k) // HOP`` frames.
+        """
+        self.base._ensure_loaded()
+        wav = _to_mono_float(wav)
+        if sample_rate != _MIMI_RATE:
+            wav = _resample(wav, sample_rate, _MIMI_RATE)
+
+        # snap the new audio to a whole number of frames (drop a partial tail, which is
+        # carried implicitly by the context on the next push via the same buffer math)
+        new_frames = len(wav) // _HOP
+        if new_frames == 0:
+            return EncodedAudio(cb0=np.zeros(0, np.int64), energy=np.zeros(0, np.float32),
+                                f0=np.zeros(0, np.float32), num_frames=0)
+        wav = wav[: new_frames * _HOP]
+
+        ctx = self._ctx
+        buf = np.concatenate([ctx, wav]) if ctx.size else wav
+        ctx_n = len(ctx) // _HOP
+
+        enc = self.base.encode_waveform(buf, _MIMI_RATE)
+        # keep only the tail that corresponds to the new audio
+        s = max(0, enc.num_frames - new_frames)
+        cb0 = enc.cb0[s:]
+        energy = enc.energy[s:]
+        f0 = enc.f0[s:]
+
+        # roll the context: keep the last ctx_frames frames of what we just saw
+        keep = self.ctx_frames * _HOP
+        self._ctx = buf[-keep:] if buf.shape[0] > keep else buf
+        # keep context frame-aligned
+        trim = (len(self._ctx) // _HOP) * _HOP
+        self._ctx = self._ctx[len(self._ctx) - trim:] if trim else np.zeros(0, np.float32)
+
+        _ = ctx_n  # (documentation: frames of left context that were dropped from output)
+        return EncodedAudio(cb0=cb0.astype(np.int64), energy=energy.astype(np.float32),
+                            f0=f0.astype(np.float32), num_frames=len(cb0))

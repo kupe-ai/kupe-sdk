@@ -104,7 +104,7 @@ class ThinkSpark:
 
         from kupe._thinkspark import vocab
         from kupe._thinkspark.inference import StreamingReferee
-        from kupe._thinkspark.mimi_codec import MimiEncoder
+        from kupe._thinkspark.mimi_codec import MimiEncoder, StreamingMimiEncoder
         from kupe._thinkspark.model import ThinkSparkModel
 
         token = hf_token or os.environ.get("HF_TOKEN")
@@ -138,6 +138,10 @@ class ThinkSpark:
             tok.pad_token = tok.eos_token
 
         self._encoder = MimiEncoder(device=device)
+        # streaming encoder: keeps rolling context so per-frame Mimi tokens carry the same
+        # left context they had offline (a bare per-frame encode feeds the model a stream
+        # of context-less "first frames" — see mimi_codec.StreamingMimiEncoder).
+        self._stream_encoder = StreamingMimiEncoder(self._encoder)
 
         net = ThinkSparkModel(
             base_model=BASE_MODEL,
@@ -157,40 +161,42 @@ class ThinkSpark:
                 f"{len(unexpected)} unexpected keys. Wrong repo or revision?"
             )
 
-        # fp32 everywhere — this matches the verified eval path. Casting the module to
-        # bf16 breaks the front-end: prosody/audio inputs are built as fp32 tensors, so
-        # F.linear hits "mat1 and mat2 must have the same dtype". TF32 already gives the
-        # matmul speedup on Ampere+ without changing any tensor dtype.
-        net = net.to(device).eval().float()
-
+        # Precision: bf16 on CUDA (the training precision — halves memory traffic and is
+        # the single biggest per-frame speedup on Ampere+), fp32 on MPS/CPU where bf16
+        # kernels are slower or unavailable. The streaming referee builds ALL front-end
+        # input tensors (prosody etc.) in the model's own dtype, so there is no more
+        # "mat1 and mat2 must have the same dtype" mismatch that forced fp32 before.
+        net = net.to(device).eval()
+        if device == "cuda":
+            net = net.to(torch.bfloat16)
         for p_ in net.parameters():
             p_.requires_grad_(False)
 
         self._referee = StreamingReferee(
-            net, tok, system_prompt=DEFAULT_SYSTEM, device=device
+            net, tok, system_prompt=DEFAULT_SYSTEM, device=device,
         )
         self._referee.set_context(agent_text=agent_text)
         self.last_encode_ms = 0.0
         self._warmup()
 
     def _warmup(self) -> None:
-        """Compile encoder + referee at the mic chunk shape so frame 1 is not 10s+."""
+        """Prime the streaming encoder + KV-cache decode at the real shapes so the first
+        live frame is not the slow one (kernel autotune, cache allocation, lazy weights)."""
         import numpy as np
         from kupe._thinkspark.inference import FrameInput
 
         samples = int(SAMPLE_RATE * FRAME_MS / 1000) * 2
         dummy = np.zeros(samples, dtype=np.float32)
-        enc = self._encoder.encode_waveform(dummy, SAMPLE_RATE)
+        enc = self._stream_encoder.push(dummy, SAMPLE_RATE)
         for i in range(enc.num_frames):
             self._referee.step(
-                FrameInput(
-                    cb0=int(enc.cb0[i]),
-                    energy=float(enc.energy[i]),
-                    f0=float(enc.f0[i]),
-                    agent_state="IDLE",
-                )
+                FrameInput(cb0=int(enc.cb0[i]), energy=float(enc.energy[i]),
+                           f0=float(enc.f0[i]), agent_state="IDLE")
             )
+        # exercise the incremental path and the spoken decoder too
+        self._referee.generate_spoken("IDLE")
         self._referee.reset()
+        self._stream_encoder.reset()
         if self.device == "mps":
             import torch
             torch.mps.synchronize()
@@ -198,6 +204,20 @@ class ThinkSpark:
     def set_context(self, agent_text: str = "", stt_partial: str = "") -> None:
         """Update what the agent is saying — decisions depend on it."""
         self._referee.set_context(agent_text=agent_text, stt_partial=stt_partial)
+
+    def reset(self) -> None:
+        """Clear rolling audio history + KV cache + encoder context (turn boundary)."""
+        self._referee.reset()
+        self._stream_encoder.reset()
+
+    def generate_spoken(self, agent_state: str = "IDLE") -> str:
+        """Decode a short spoken back-channel / thinking-sound from the current context.
+
+        Call this ONLY when the orchestrator has decided to speak — it is deliberately
+        NOT run every frame (that was the old latency bug). Returns "" for the silent
+        case. Decodes from a clone of the live cache, so streaming state is untouched.
+        """
+        return self._referee.generate_spoken(agent_state)
 
     def stream(
         self,
@@ -221,7 +241,7 @@ class ThinkSpark:
 
         for chunk in frames:
             t0 = time.perf_counter()
-            enc = self._encoder.encode_waveform(chunk, sample_rate)
+            enc = self._stream_encoder.push(chunk, sample_rate)
             self.last_encode_ms = (time.perf_counter() - t0) * 1000.0
 
             for i in range(enc.num_frames):
@@ -237,7 +257,9 @@ class ThinkSpark:
                 latency = getattr(result, "decode_ms", None)
                 if latency is None:
                     latency = (time.perf_counter() - t1) * 1000.0
-                yield Decision(result.flag, getattr(result, "spoken", "") or "", latency)
+                # spoken text is decoupled: step() no longer decodes it every frame.
+                # The orchestrator calls generate_spoken() only when it decides to speak.
+                yield Decision(result.flag, "", latency)
 
     @staticmethod
     def _mic_chunks(sample_rate: int):

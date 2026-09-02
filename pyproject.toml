@@ -31,7 +31,7 @@ thinkspark = [
   # transformers >= 4.56 hard-requires torch >= 2.5; pin both together so a stale
   # torch in the environment fails at install time instead of at model load
   "torch>=2.5",
-  "transformers>=4.44,<5",
+  "transformers>=4.49,<5",
   "numpy>=1.24",
   "huggingface_hub>=0.24",
 ]
