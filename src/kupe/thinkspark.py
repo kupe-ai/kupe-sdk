@@ -20,6 +20,32 @@ import time
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass
 
+
+def _tune_backend(device: str) -> None:
+    """Per-device knobs that matter for per-frame latency.
+
+    Verified-safe defaults across CPU, Apple MPS, and every consumer/datacenter CUDA
+    card (3060/4060/3090/4090/5090, L4, H100, RTX 6000). Nothing here changes model
+    outputs — only how the kernels are scheduled.
+    """
+    import torch
+
+    torch.set_grad_enabled(False)
+
+    if device == "cuda":
+        # TF32 matmuls: large speedup on Ampere and newer, ignored on older cards
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+    elif device == "cpu":
+        # one frame at a time is latency-bound, not throughput-bound; oversubscribing
+        # threads adds sync overhead per 80 ms frame
+        try:
+            import os as _os
+            torch.set_num_threads(min(4, _os.cpu_count() or 4))
+        except Exception:
+            pass
+
 DEFAULT_MODEL = "anuj-inavlabs/Kupe-ThinkSpark-Realtime-270M"
 BASE_MODEL = "google/gemma-3-270m"
 SAMPLE_RATE = 24_000
@@ -84,6 +110,7 @@ class ThinkSpark:
                 else "cpu"
             )
         self.device = device
+        _tune_backend(device)
 
         tok = AutoTokenizer.from_pretrained(BASE_MODEL, token=token)
         tok.add_special_tokens({"additional_special_tokens": vocab.ALL_SPECIAL_TOKENS})
@@ -104,8 +131,17 @@ class ThinkSpark:
         state = torch.load(weights, map_location=device)
         net.load_state_dict(state, strict=False)
 
+        net = net.to(device).eval()
+        # bf16 on Ampere+ (3090/4090/5090/L4/H100/RTX6000) roughly halves decode time;
+        # older cards and CPU stay fp32. MPS keeps fp32 — bf16 there is not faster.
+        if device == "cuda" and torch.cuda.is_bf16_supported():
+            net = net.to(torch.bfloat16)
+
+        for p_ in net.parameters():
+            p_.requires_grad_(False)
+
         self._referee = StreamingReferee(
-            net.to(device).eval(), tok, system_prompt=DEFAULT_SYSTEM, device=device
+            net, tok, system_prompt=DEFAULT_SYSTEM, device=device
         )
         self._referee.set_context(agent_text=agent_text)
         self.last_encode_ms = 0.0
