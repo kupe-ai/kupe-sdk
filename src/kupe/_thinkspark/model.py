@@ -58,6 +58,7 @@ class ThinkSparkModel(nn.Module):
         gradient_checkpointing: bool = True,
         extra_special_tokens: list[str] | None = None,
         attn_implementation: str = "sdpa",
+        config_source: str | None = None,
     ):
         super().__init__()
         from transformers import AutoModelForCausalLM
@@ -80,10 +81,28 @@ class ThinkSparkModel(nn.Module):
                     return AutoModelForCausalLM.from_pretrained(
                         base_model, token=hf_token, attn_implementation="sdpa", **dtype_kw)
                 raise
-        try:
-            self.backbone = _load({"dtype": torch.bfloat16})
-        except TypeError:
-            self.backbone = _load({"torch_dtype": torch.bfloat16})
+        if config_source is not None:
+            # Build the backbone from CONFIG ONLY — no pretrained weight download.
+            # Every one of these weights is overwritten by the ThinkSpark checkpoint
+            # moments later, so downloading Gemma's is pure waste, and it is a gated
+            # repo that most users cannot pull at all.
+            from transformers import AutoConfig
+
+            cfg = AutoConfig.from_pretrained(config_source, token=hf_token)
+            try:
+                cfg._attn_implementation = attn_implementation
+            except Exception:
+                pass
+            try:
+                self.backbone = AutoModelForCausalLM.from_config(
+                    cfg, torch_dtype=torch.bfloat16)
+            except TypeError:
+                self.backbone = AutoModelForCausalLM.from_config(cfg)
+        else:
+            try:
+                self.backbone = _load({"dtype": torch.bfloat16})
+            except TypeError:
+                self.backbone = _load({"torch_dtype": torch.bfloat16})
         if gradient_checkpointing:
             self.backbone.gradient_checkpointing_enable()
 

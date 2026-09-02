@@ -47,6 +47,8 @@ def _tune_backend(device: str) -> None:
             pass
 
 DEFAULT_MODEL = "anuj-inavlabs/Kupe-ThinkSpark-Realtime-270M"
+# Fallback only. The model repo ships its own tokenizer + config, so nothing is fetched
+# from the gated Gemma repo — see _resolve_repo().
 BASE_MODEL = "google/gemma-3-270m"
 SAMPLE_RATE = 24_000
 FRAME_MS = 80
@@ -79,6 +81,8 @@ class ThinkSpark:
         device: "auto" (default), "cuda", "mps", or "cpu".
         agent_text: what your agent is currently saying, used as context.
         hf_token: Hugging Face token; falls back to $HF_TOKEN.
+        revision: git revision/branch/tag in the model repo.
+        subfolder: path inside the repo, e.g. "phase2/runs/<run-id>/step5500".
     """
 
     def __init__(
@@ -88,10 +92,12 @@ class ThinkSpark:
         *,
         agent_text: str = "",
         hf_token: str | None = None,
+        revision: str | None = None,
+        subfolder: str = "",
     ):
         try:
             import torch
-            from huggingface_hub import hf_hub_download
+            from huggingface_hub import snapshot_download
             from transformers import AutoTokenizer
         except ImportError as e:  # pragma: no cover - dependency guard
             raise ImportError(_MISSING_DEPS) from e
@@ -112,7 +118,21 @@ class ThinkSpark:
         self.device = device
         _tune_backend(device)
 
-        tok = AutoTokenizer.from_pretrained(BASE_MODEL, token=token)
+        # Pull the whole checkpoint folder: weights + tokenizer + config. This repo is
+        # self-contained, so google/gemma-3-270m (gated) is never touched.
+        pat = f"{subfolder}/" if subfolder else ""
+        local = snapshot_download(
+            repo_id=model, token=token, revision=revision,
+            allow_patterns=[f"{pat}*.json", f"{pat}model.pt"],
+        )
+        if subfolder:
+            local = os.path.join(local, subfolder)
+
+        has_own = os.path.exists(os.path.join(local, "config.json"))
+        tok_src = local if os.path.exists(os.path.join(local, "tokenizer.json")) else BASE_MODEL
+
+        tok = AutoTokenizer.from_pretrained(tok_src, token=token)
+        # the checkpoint's tokenizer already has these; add_special_tokens is a no-op then
         tok.add_special_tokens({"additional_special_tokens": vocab.ALL_SPECIAL_TOKENS})
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
@@ -124,12 +144,18 @@ class ThinkSpark:
             codebook_size=self._encoder.codebook_size,
             hf_token=token,
             gradient_checkpointing=False,
+            config_source=local if has_own else None,
         )
         net.resize_token_embeddings(len(tok))
 
-        weights = hf_hub_download(repo_id=model, filename="model.pt", token=token)
+        weights = os.path.join(local, "model.pt")
         state = torch.load(weights, map_location=device)
-        net.load_state_dict(state, strict=False)
+        missing, unexpected = net.load_state_dict(state, strict=False)
+        if len(missing) > 20:
+            raise RuntimeError(
+                f"checkpoint does not fit the model: {len(missing)} missing / "
+                f"{len(unexpected)} unexpected keys. Wrong repo or revision?"
+            )
 
         net = net.to(device).eval()
         # bf16 on Ampere+ (3090/4090/5090/L4/H100/RTX6000) roughly halves decode time;

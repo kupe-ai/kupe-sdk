@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kupe"
-version = "0.2.1"
+version = "0.3.0"
 description = "Official Python SDK for the Kupe voice API"
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,8 +28,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 thinkspark = [
-  "torch>=2.2",
-  "transformers>=4.44",
+  # transformers >= 4.56 hard-requires torch >= 2.5; pin both together so a stale
+  # torch in the environment fails at install time instead of at model load
+  "torch>=2.5",
+  "transformers>=4.44,<5",
   "numpy>=1.24",
   "huggingface_hub>=0.24",
 ]
