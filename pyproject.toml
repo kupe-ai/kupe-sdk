@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kupe"
-version = "0.1.6"
+version = "0.2.0"
 description = "Official Python SDK for the Kupe voice API"
 readme = "README.md"
 license = { text = "MIT" }
@@ -27,6 +27,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+thinkspark = [
+  "torch>=2.2",
+  "transformers>=4.44",
+  "numpy>=1.24",
+  "huggingface_hub>=0.24",
+]
+mic = ["sounddevice>=0.4"]
 
 [project.urls]
 Homepage = "https://docs.kupe.in"

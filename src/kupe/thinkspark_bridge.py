@@ -1,4 +1,4 @@
-"""Stdin/stdout JSON-lines bridge used by kupe-sdk's (npm) ThinkSpark class.
+"""Stdin/stdout JSON-lines bridge used by kupe-sdk (npm)'s ThinkSpark class.
 
 Not meant to be run by hand — invoked as a subprocess:
     python -m kupe.thinkspark_bridge --source mic
@@ -13,13 +13,13 @@ import argparse
 import json
 import sys
 
-import numpy as np
-
-from kupe.thinkspark import ThinkSpark
+from kupe.thinkspark import SAMPLE_RATE, ThinkSpark
 
 
-def _stdin_frames(sample_rate: int):
+def _stdin_chunks(sample_rate: int):
     frame_bytes = int(sample_rate * 0.08) * 4  # float32
+    import numpy as np
+
     buf = b""
     while True:
         chunk = sys.stdin.buffer.read(65536)
@@ -35,8 +35,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=None)
     ap.add_argument("--device", default="auto")
-    ap.add_argument("--sample-rate", type=int, default=24_000)
+    ap.add_argument("--sample-rate", type=int, default=SAMPLE_RATE)
     ap.add_argument("--source", choices=["mic", "stdin"], default="mic")
+    ap.add_argument("--agent-state", default="IDLE")
     args = ap.parse_args()
 
     kwargs = {"device": args.device}
@@ -44,9 +45,10 @@ def main() -> None:
         kwargs["model"] = args.model
     ts = ThinkSpark(**kwargs)
 
-    source = "mic" if args.source == "mic" else _stdin_frames(args.sample_rate)
-    for d in ts.stream(source, sample_rate=args.sample_rate):
-        print(json.dumps({"flag": d.flag, "spoken": d.spoken, "latency_ms": d.latency_ms}), flush=True)
+    source = "mic" if args.source == "mic" else _stdin_chunks(args.sample_rate)
+    for d in ts.stream(source, sample_rate=args.sample_rate, agent_state=args.agent_state):
+        print(json.dumps({"flag": d.flag, "spoken": d.spoken,
+                          "latency_ms": d.latency_ms}), flush=True)
 
 
 if __name__ == "__main__":
