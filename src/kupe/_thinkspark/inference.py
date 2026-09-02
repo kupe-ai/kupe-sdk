@@ -105,7 +105,7 @@ class StreamingReferee:
 
         batch = self._make_batch(torch)
         t0 = time.perf_counter()
-        with torch.no_grad():
+        with torch.inference_mode():
             out = self.model(**batch)
         decode_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -135,9 +135,16 @@ class StreamingReferee:
             ids.extend(piece); seg.extend([sid] * len(piece))
 
         T = len(self._cb0)
-        f0n = np.array(self._f0, dtype=np.float32)
+        pad = max(0, self.window - T)
+        cb0 = [0] * pad + self._cb0
+        energy = [0.0] * pad + self._energy
+        f0 = [0.0] * pad + self._f0
+        state = [0] * pad + self._state
+        audio_mask = [0] * pad + [1] * T
+
+        f0n = np.array(f0, dtype=np.float32)
         f0n = np.where(f0n > 1.0, np.log(np.maximum(f0n, 1.0)) - np.log(150.0), 0.0)
-        prosody = np.stack([np.array(self._energy, dtype=np.float32), f0n], axis=-1)
+        prosody = np.stack([np.array(energy, dtype=np.float32), f0n], axis=-1)
 
         dev = self.device
         L = lambda a, dt: torch.tensor(a, dtype=dt, device=dev).unsqueeze(0)
@@ -145,10 +152,10 @@ class StreamingReferee:
             "text_ids": L(ids, torch.long),
             "text_seg": L(seg, torch.long),
             "text_mask": L([1] * len(ids), torch.long),
-            "cb0": L(self._cb0, torch.long),
+            "cb0": L(cb0, torch.long),
             "prosody": torch.tensor(prosody, dtype=torch.float32, device=dev).unsqueeze(0),
-            "agent_state": L(self._state, torch.long),
-            "audio_mask": L([1] * T, torch.long),
+            "agent_state": L(state, torch.long),
+            "audio_mask": L(audio_mask, torch.long),
         }
 
     def _maybe_generate_spoken(self, out, batch, torch) -> str:

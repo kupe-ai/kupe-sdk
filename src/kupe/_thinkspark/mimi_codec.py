@@ -70,7 +70,11 @@ class MimiEncoder:
         from transformers import MimiModel, AutoFeatureExtractor
 
         self._torch = torch
-        dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
+        dev = self._device or (
+            "cuda" if torch.cuda.is_available()
+            else "mps" if torch.backends.mps.is_available()
+            else "cpu"
+        )
         self._device = dev
         if dev == "cpu":
             # By default torch uses ALL CPU cores for its own internal intra-op thread

@@ -109,6 +109,29 @@ class ThinkSpark:
         )
         self._referee.set_context(agent_text=agent_text)
         self.last_encode_ms = 0.0
+        self._warmup()
+
+    def _warmup(self) -> None:
+        """Compile encoder + referee at the mic chunk shape so frame 1 is not 10s+."""
+        import numpy as np
+        from kupe._thinkspark.inference import FrameInput
+
+        samples = int(SAMPLE_RATE * FRAME_MS / 1000) * 2
+        dummy = np.zeros(samples, dtype=np.float32)
+        enc = self._encoder.encode_waveform(dummy, SAMPLE_RATE)
+        for i in range(enc.num_frames):
+            self._referee.step(
+                FrameInput(
+                    cb0=int(enc.cb0[i]),
+                    energy=float(enc.energy[i]),
+                    f0=float(enc.f0[i]),
+                    agent_state="IDLE",
+                )
+            )
+        self._referee.reset()
+        if self.device == "mps":
+            import torch
+            torch.mps.synchronize()
 
     def set_context(self, agent_text: str = "", stt_partial: str = "") -> None:
         """Update what the agent is saying — decisions depend on it."""
