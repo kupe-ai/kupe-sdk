@@ -157,11 +157,11 @@ class ThinkSpark:
                 f"{len(unexpected)} unexpected keys. Wrong repo or revision?"
             )
 
-        net = net.to(device).eval()
-        # bf16 on Ampere+ (3090/4090/5090/L4/H100/RTX6000) roughly halves decode time;
-        # older cards and CPU stay fp32. MPS keeps fp32 — bf16 there is not faster.
-        if device == "cuda" and torch.cuda.is_bf16_supported():
-            net = net.to(torch.bfloat16)
+        # fp32 everywhere — this matches the verified eval path. Casting the module to
+        # bf16 breaks the front-end: prosody/audio inputs are built as fp32 tensors, so
+        # F.linear hits "mat1 and mat2 must have the same dtype". TF32 already gives the
+        # matmul speedup on Ampere+ without changing any tensor dtype.
+        net = net.to(device).eval().float()
 
         for p_ in net.parameters():
             p_.requires_grad_(False)
