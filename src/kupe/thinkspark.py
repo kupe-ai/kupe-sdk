@@ -166,9 +166,12 @@ class ThinkSpark:
         # kernels are slower or unavailable. The streaming referee builds ALL front-end
         # input tensors (prosody etc.) in the model's own dtype, so there is no more
         # "mat1 and mat2 must have the same dtype" mismatch that forced fp32 before.
+        # The Gemma3 backbone was constructed in bf16. Keep bf16 ONLY on CUDA; force
+        # fp32 on MPS/CPU. Apple's MPS has no bf16 matmul kernel — a bf16 module there
+        # aborts with "Destination NDArray and Accumulator NDArray cannot have different
+        # datatype in MPSNDArrayMatrixMultiplication". fp32 is correct and plenty fast.
         net = net.to(device).eval()
-        if device == "cuda":
-            net = net.to(torch.bfloat16)
+        net = net.to(torch.bfloat16) if device == "cuda" else net.float()
         for p_ in net.parameters():
             p_.requires_grad_(False)
 
