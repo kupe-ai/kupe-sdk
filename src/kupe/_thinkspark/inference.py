@@ -274,7 +274,15 @@ class StreamingReferee:
         return ids, seg
 
     def _text_sig(self) -> tuple:
-        return (self.system_prompt, self.agent_text, self.stt_partial)
+        # stt_partial is DELIBERATELY excluded from the rebuild trigger. It changes every
+        # few hundred ms as STT streams, and each change would force a full-cache rebuild
+        # (a ~200-token forward = 300-1100 ms on MPS-fp32) — those stalls back up the
+        # frame queue and drop the very audio around a turn-end, so the model misses
+        # TURN_END. During a user turn the agent isn't speaking (agent_text == ""), so
+        # endpointing is pure prosody (the VAP premise); STT text is auxiliary and is
+        # still folded in at the next natural rebuild (agent speaks, or hard_cap). Net:
+        # a user turn streams incrementally with ZERO stalls.
+        return (self.system_prompt, self.agent_text)
 
     # -- embeddings (reuse the model's own front-end math) -------------- #
     def _embed_text(self, torch, ids: list[int], vocab_seg: str = "agent"):
